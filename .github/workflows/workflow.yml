@@ -1,0 +1,69 @@
+version: 2.1
+executors:
+  python-executor:
+    docker:
+      - image: cimg/python:3.10
+    working_directory: ~/project
+jobs:
+  check-script:
+    executor: python-executor
+    steps:
+      - checkout
+      - run:
+          name: Install tkinter dependencies
+          command: sudo apt-get update && sudo apt-get install -y python3-tk
+      - run:
+          name: Check if script runs without errors
+          command: python testscript.py
+  build-windows-exe:
+    machine:
+      image: windows-server-2019-vs2019:stable
+    steps:
+      - checkout
+      - run:
+          name: Install Python
+          command: choco install python --version=3.10.0 -y
+      - run:
+          name: Install pip dependencies
+          command: pip install pyinstaller
+      - run:
+          name: Build Windows executable
+          command: pyinstaller --onefile testscript.py
+      - persist_to_workspace:
+          root: dist
+          paths:
+            - testscript.exe
+  publish-release:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - attach_workspace:
+          at: ~/dist
+      - run:
+          name: Install GitHub CLI
+          command: |
+            sudo apt-get update
+            sudo apt-get install -y curl
+            type -p curl >/dev/null || (sudo apt install curl -y)
+            curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+            sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+            sudo apt-get update
+            sudo apt-get install gh -y
+      - run:
+          name: Publish Release on GitHub
+          command: |
+            gh release create v${CIRCLE_SHA1:0:7} ~/dist/testscript.exe --title "Automated Release ${CIRCLE_SHA1:0:7}" --notes "Automated build and release."
+workflows:
+  version: 2
+  build_and_release:
+    jobs:
+      - check-script
+      - build-windows-exe:
+          requires:
+            - check-script
+      - publish-release:
+          context: github-release
+          requires:
+            - build-windows-exe
